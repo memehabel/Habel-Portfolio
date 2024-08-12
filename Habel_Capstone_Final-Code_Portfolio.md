@@ -100,9 +100,6 @@ library(regclass)
     ## Loading required package: bestglm
     ## Loading required package: leaps
     ## Loading required package: VGAM
-
-    ## Warning: package 'VGAM' was built under R version 4.3.3
-
     ## Loading required package: stats4
     ## Loading required package: splines
     ## Loading required package: rpart
@@ -130,11 +127,6 @@ library(factoextra)
 
 ``` r
 library(DAAG)
-```
-
-    ## Warning: package 'DAAG' was built under R version 4.3.3
-
-``` r
 library(caret)
 ```
 
