@@ -1,4 +1,5 @@
-Capstone: R Code
+Global Nutrition and Health: Analyzing the Relationship Between Diet
+Composition and Disease Prevalence
 ================
 Meme Habel
 2024-07-12
@@ -928,26 +929,6 @@ ggplot(feat_imp_df_cardio_prevalence, aes(x = reorder(feature, IncNodePurity),
 ```
 
 ![](Habel_Capstone_Final-Code_Portfolio_files/figure-gfm/unnamed-chunk-29-1.png)<!-- -->
-
-<div id="viz1719876679718" class="tableauPlaceholder"
-style="position: relative">
-
-<noscript>
-<a href='#'><img alt='Cluster Depiction on World Map ' src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;N8&#47;N8W3BRMBY&#47;1_rss.png' style='border: none' /></a>
-</noscript>
-<object class="tableauViz" style="display:none;">
-<param name='host_url' value='https%3A%2F%2Fpublic.tableau.com%2F' />
-<param name='embed_code_version' value='3' />
-<param name='path' value='shared&#47;N8W3BRMBY' />
-<param name='toolbar' value='yes' /><param name='static_image' value='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;N8&#47;N8W3BRMBY&#47;1.png' />
-<param name='animate_transition' value='yes' /><param name='display_static_image' value='yes' /><param name='display_spinner' value='yes' /><param name='display_overlay' value='yes' /><param name='display_count' value='yes' /><param name='language' value='en-US' /><param name='filter' value='publish=yes' />
-</object>
-
-</div>
-
-<script>
-var divElement = document.getElementById('viz1719876679718');                    var vizElement = divElement.getElementsByTagName('object')[0];                    vizElement.style.width='100%';vizElement.style.height=(divElement.offsetWidth*0.75)+'px';                    var scriptElement = document.createElement('script');                    scriptElement.src = 'https://public.tableau.com/javascripts/api/viz_v1.js';                    vizElement.parentNode.insertBefore(scriptElement, vizElement);               
-</script>
 
 ### 2. Neoplasms
 
