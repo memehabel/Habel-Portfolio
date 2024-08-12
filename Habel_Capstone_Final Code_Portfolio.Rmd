@@ -1,0 +1,1026 @@
+---
+title: "Capstone: R Code"
+author: "Meme Habel"
+date: "2024-07-12"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Capstone Code File {.tabset}
+
+## Preparation
+
+### Load Libraries 
+
+```{r}
+library(tidyverse)  
+library(readxl)
+library(reshape2)
+library(gridExtra)
+library(corrplot)
+library(randomForest)
+library(gbm)
+library(neuralnet)
+library(regclass)
+library(pdp)
+library(cluster)
+library(factoextra)
+library(DAAG)
+library(caret)
+```
+
+### Import Data
+
+```{r load_data, warning = FALSE}
+# load Macronutrient Composition Data
+macronutrient_data <- read_excel('./data/Macronutrient Compositions_Cleaned.xlsx')
+
+#load GBD Disease Prevalence Data
+GBD_prevalence_data <- read_excel('./data/GBD Prevalence 2010-2019.xlsx')
+
+#load GBD Disease Deaths Data (Diseases causing deaths in each country)
+GBD_deaths_data <- read_excel('./data/GBD Death 2010-2019.xlsx')
+
+#load GBD Disease DALYs Data (Disability-Adjusted Life Years)
+GBD_DALY_data <- read_excel('./data/GBD DALYs 2010-2019.xlsx')
+
+#load WHO Prevalence of insufficient physical activity among adults aged 18+ years (age-standardized estimate) (%)
+phys_activity_data <- read_excel('./data/WHO Prevalence of insufficient physical activity among adults aged 18+ years (age-standardized estimate) (percent) 2000-2019.xlsx')
+
+
+#load WHO Alcohol Consumption Data -- Alcohol, recorded per capita (15+) consumption (in litres of pure alcohol), by beverage type
+alc_consumption_data <- read_excel('./data/Alcohol Consumption 2010-2019.xlsx')
+
+#load Disease Data on specific Cardiovascular Diseases
+cardio_specific_data <- read_excel('./data/GBD Cardio Causes 2010-2019.xlsx') %>% 
+  pivot_wider(id_cols = c(location_id,location_name,cause_id,cause_name,year), 
+              names_from = measure_name, 
+              values_from = val)  %>% 
+  na.omit()
+```
+
+### Macronutrient Composition Averages Dataset
+
+The Macronutrient Composition Data contains country-specific yearly diet composition values.  However, the years included varies based on each country's reporting cadence to the Food and Agriculture Organization of the United Nations.  Thus, for the majority of my analysis I will be using averaged values across all included years for each country.  
+
+```{r}
+avg_macronutrient_data <- macronutrient_data %>% 
+  filter(least_developed_country == 'No') %>% 
+  filter(year >= 2000) %>% 
+  group_by(location_id, country) %>% 
+  summarize(
+    avg_total_energy = mean(total_energy, na.rm = TRUE),
+    #avg_energy_from_vegetal_products = mean(energy_from_vegetal_products, na.rm = TRUE),
+    avg_energy_from_animal_products = mean(energy_from_animal_products, na.rm = TRUE),
+    avg_total_fat = mean(total_fat, na.rm = TRUE),
+    #avg_fat_from_vegetal_products = mean(fat_from_vegetal_products, na.rm = TRUE),
+    #avg_fat_from_animal_products = mean(fat_from_animal_products, na.rm = TRUE),
+    avg_total_protein = mean(total_protein, na.rm = TRUE),
+    #avg_protein_from_vegetal_products = mean(protein_from_vegetal_products, na.rm = TRUE),
+    #avg_protein_from_animal_products = mean(protein_from_animal_products, na.rm = TRUE),
+    avg_total_carbohydrates = mean(total_carbohydrates, na.rm = TRUE))
+
+# Output as text file to use in Tableau
+write.csv(avg_macronutrient_data,"./data/R Output Data/avg_macronutrient_data.csv", row.names = FALSE)
+```
+
+Include Least Develop Countries for Tableau
+```{r}
+avg_macronutrient_data_tableau <- macronutrient_data %>% 
+  filter(year >= 2000) %>% 
+  group_by(location_id, country) %>% 
+  summarize(
+    avg_total_energy = mean(total_energy, na.rm = TRUE),
+    #avg_energy_from_vegetal_products = mean(energy_from_vegetal_products, na.rm = TRUE),
+    avg_energy_from_animal_products = mean(energy_from_animal_products, na.rm = TRUE),
+    avg_total_fat = mean(total_fat, na.rm = TRUE),
+    #avg_fat_from_vegetal_products = mean(fat_from_vegetal_products, na.rm = TRUE),
+    #avg_fat_from_animal_products = mean(fat_from_animal_products, na.rm = TRUE),
+    avg_total_protein = mean(total_protein, na.rm = TRUE),
+    #avg_protein_from_vegetal_products = mean(protein_from_vegetal_products, na.rm = TRUE),
+    #avg_protein_from_animal_products = mean(protein_from_animal_products, na.rm = TRUE),
+    avg_total_carbohydrates = mean(total_carbohydrates, na.rm = TRUE))
+```
+
+
+Yearly with Averages 
+
+```{r}
+yearly_and_avg_macronutrient_data <- macronutrient_data %>% 
+  filter(year >= 2000) %>% 
+  inner_join(avg_macronutrient_data_tableau, 
+             join_by(location_id, country)) 
+
+# Output as text file to use in Tableau
+write.csv(yearly_and_avg_macronutrient_data,"./data/R Output Data/yearly_and_avg_macronutrient_data.csv", row.names = FALSE)
+```
+
+### Insufficient Physical Activity Averages Dataset
+
+Similar to the Macronutrient Composition data, I will primarily be working with the averages across years for the Prevalence of insufficient physical activity among adults aged 18+ years (age-standardized estimate) (%). This is defined as the "Percent of population attaining less than 150 minutes of moderate-intensity physical activity per week, or less than 75 minutes of vigorous-intensity physical activity per week, or equivalent.". For the averages data set, I will be using data from 2010 and beyond. I will also be looking at the data for both sexes in this averaged data set.   
+
+```{r}
+avg_phys_activity_data <- phys_activity_data %>% 
+  select(-c('ParentLocationCode', 'ParentLocation', 'SpatialDimValueCode', 
+            'Percent_insufficient_phys_activity low', 'FactValueNumericHigh')) %>% 
+  filter(Sex == 'Both sexes' & Year >= 2010) %>% 
+  group_by(Location, location_id) %>% 
+  summarize(avg_pct_insufficient_activity = mean(Percent_insufficient_phys_activity, na.rm = TRUE), .groups = "keep")
+
+# Output as text file to use in Tableau
+write.csv(avg_phys_activity_data,"./data/R Output Data/avg_phys_activity_data.csv", row.names = FALSE)
+```
+
+### Average and Reshape Alcohol Consumption Data
+
+```{r}
+avg_alc_data <- alc_consumption_data %>% 
+  select(-Location) %>% 
+  filter(Beverage_Type != 'Other alcoholic beverages') %>% 
+  mutate(Beverage_Type = if_else(Beverage_Type == 'All types', 'Total_Alcohol', Beverage_Type)) %>% 
+  group_by(location_id, Beverage_Type) %>% 
+  summarize(avg_alc_consumption = mean(alc_consump_per_capita, na.rm=TRUE, .groups="keep")) %>% 
+  pivot_wider(id_cols = location_id, names_from = Beverage_Type, values_from = avg_alc_consumption) %>% 
+  mutate(avg_total_alc_consumption = Total_Alcohol) %>% 
+  select(-c(Beer, Wine, Spirits, Total_Alcohol))
+
+# Output as text file to use in Tableau
+write.csv(avg_alc_data,"./data/R Output Data/avg_alc_data.csv", row.names = FALSE)
+```
+										
+### Average GBD Data Sets
+
+Average Disease Deaths Data
+```{r}
+avg_deaths_data <- GBD_deaths_data %>% 
+  group_by(location_id, location_name, cause_id, cause_name) %>% 
+  summarize(
+    avg_death_rate = mean(Death_Rate, na.rm = TRUE))
+```
+
+Average Disease Prevalence Data
+```{r}
+avg_prevalence_data <- GBD_prevalence_data %>% 
+  group_by(location_id, location_name, cause_id, cause_name) %>% 
+  summarize(
+    avg_prevalence_rate = mean(Prevalence_Rate, na.rm = TRUE))
+```										
+
+Average Disease DALYs Data
+```{r}
+avg_DALY_data <- GBD_DALY_data %>% 
+  group_by(location_id, location_name, cause_id, cause_name) %>% 
+  summarize(
+    avg_DALY_rate = mean(DALY_rate, na.rm = TRUE))
+```		
+
+### Combine GBD Data
+Average 
+```{r}
+avg_GBD_combined <- avg_prevalence_data %>% 
+  inner_join(avg_deaths_data, 
+             join_by(location_id, location_name, cause_id, cause_name)) %>% 
+  inner_join(avg_DALY_data, 
+             join_by(location_id, location_name, cause_id, cause_name))
+
+# Output as text file to use in Tableau
+write.csv(avg_GBD_combined,"./data/R Output Data/avg_GBD_combined.csv", row.names = FALSE)
+```
+
+Yearly (2010-2019)
+```{r}
+yearly_GBD_combined <- GBD_prevalence_data %>% 
+  inner_join(GBD_deaths_data, 
+             join_by(location_id, location_name, cause_id, cause_name,year)) %>% 
+  inner_join(GBD_DALY_data, 
+             join_by(location_id, location_name, cause_id, cause_name,year))
+
+# Output as text file to use in Tableau
+write.csv(yearly_GBD_combined,"./data/R Output Data/yearly_GBD_combined.csv", row.names = FALSE)
+```
+
+Yearly with Averages 
+
+```{r}
+yearly_and_avg_GBD_combined <- yearly_GBD_combined %>% 
+  inner_join(avg_GBD_combined, 
+             join_by(location_id, location_name, cause_id, cause_name)) 
+
+# Output as text file to use in Tableau
+write.csv(yearly_and_avg_GBD_combined,"./data/R Output Data/yearly_and_avg_GBD_combined.csv", row.names = FALSE)
+```
+
+
+### Join Datasets
+
+Next, I will join the Average Macronutrient Composition Data with the GBD Disease Prevalence Data (combined genders) as well as the Insufficient Physical Activity Averages.  I will use an inner join to assure I only include country-specific data for countries included in all data sets.  My primary key will be location_id.
+
+```{r}
+combined_data <- avg_GBD_combined %>% 
+  inner_join(avg_macronutrient_data, join_by(location_id)) %>% 
+  inner_join(avg_phys_activity_data, join_by(location_id)) %>% 
+  inner_join(avg_alc_data, join_by(location_id))
+```
+
+
+## Data Exploration
+
+### Leading Disease Prevalence in USA
+
+First, I wanted to look and see which disease categories are the most prevalent in the United States.
+
+```{r}
+USA_data_prevalence <- avg_GBD_combined %>% 
+  filter(location_id == 102) %>% # this is the location_id for USA 
+  ungroup() %>% 
+  select(c(avg_prevalence_rate, avg_death_rate, avg_DALY_rate, cause_name, cause_id)) %>% 
+  slice_max(order_by=avg_prevalence_rate, n=10)
+USA_data_prevalence
+```
+
+### Leading Disease Death Rates in USA
+
+Next, I look to see which disease categories have the highest death rates in the United States.
+
+```{r}
+USA_data_death <- avg_GBD_combined %>% 
+  filter(location_id == 102) %>% # this is the location_id for USA 
+  ungroup() %>% 
+  select(c(avg_prevalence_rate, avg_death_rate, avg_DALY_rate, cause_name, cause_id)) %>% 
+  slice_max(order_by=avg_death_rate, n=10)
+USA_data_death
+```
+
+
+
+Based on the charts above, I see that Cardiovascular diseases, Neoplasms, Neurological disorders, Chronic respiratory diseases, and Diabetes and kidney diseases are the leading causes of disease-related deaths.  Meanwhile 'other non-communicable diseases',	Neurological disorders, and Musculoskeletal disorders are the most prevalent disease categories in the United States.
+
+
+## Modeling {.tabset}
+
+
+### Create Prevalence Data Set 
+
+```{r}
+combined_prevalence_data <- combined_data %>% 
+  ungroup() %>% 
+  #select(-c(location_id, location_name, country, Location))
+  select(-c(country, Location))
+```
+
+### Create dataframe for evaluation metrics
+```{r}
+# Initialize the data frame to store evaluation metrics
+model_metrics <- data.frame(
+  model_name = character(),
+  MSPE = numeric(),
+  MAE = numeric(),
+  RMSE = numeric(),
+  R_squared = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Example function to add metrics to the data frame
+add_model_metrics <- function(model_metrics, model_name, mspe, mae, rmse, r_squared) {
+  new_metrics <- data.frame(
+    model_name = model_name,
+    MSPE = mspe,
+    MAE = mae,
+    RMSE = rmse,
+    R_squared = r_squared,
+    stringsAsFactors = FALSE
+  )
+  rbind(model_metrics, new_metrics)
+}
+```
+
+
+### 1. Cardiovascular Diseases {.tabset}
+
+#### Cardiovascular Diseases Data Set
+
+Create Cardiovascular disease prevalence data set
+```{r}
+# Cardiovascular diseases:	cause_id = 491	
+cardio_data <- combined_prevalence_data %>% 
+  filter(cause_id == 491) %>% 
+  ungroup() %>% 
+  select(-c(cause_name, cause_id))
+```
+
+
+#### Correlation Matrix
+
+```{r}
+corr_data_cardio <- cardio_data %>% 
+  select(-c(location_id, location_name)) %>% 
+  cor(use = "complete.obs") %>% 
+  round(2)
+
+corrplot(corr_data_cardio[4:10,1:3], 
+         tl.col = "black", tl.srt = 45, cl.pos='r', cl.ratio=.4, cl.align.text='l', cl.offset=.5, cl.length=15,
+         title = "Correlation Matrix for Cardiovascular Diseases")
+```
+
+#### Data Preparation for Modeling
+
+Drop Death Rate and DALY Rate from Data Frame
+```{r}
+cardio_prevalence <- cardio_data %>% 
+  select(-c(avg_death_rate, avg_DALY_rate))
+```
+
+Move location_id and location_name to be last columns
+```{r}
+
+```
+
+
+#### Normalize Data and Set Cross-Validation Parameters
+```{r}
+# Columns to move to the end
+cols_to_move <- c('location_id', 'location_name')
+
+set.seed(1234)
+# Make a copy of the dataset to work with
+cardio_prevalence_scaled_strings <- cardio_prevalence %>%
+  select(-one_of(cols_to_move), everything(), one_of(cols_to_move))
+
+# Columns to exclude from scaling
+exclude_cols <- c('location_id', 'location_name')
+
+# Initialize empty vectors to store min and max values for scaling columns only
+scaling_cols <- setdiff(colnames(cardio_prevalence_scaled_strings), exclude_cols)
+min_values_cardio <- numeric(length = length(scaling_cols))
+max_values_cardio <- numeric(length = length(scaling_cols))
+
+# Normalize all numerical variables to range [0, 1] and save min/max values
+for (j in seq_along(scaling_cols)) {
+  min_val_cardio <- min(cardio_prevalence_scaled_strings[[j]], na.rm = TRUE)
+  max_val_cardio <- max(cardio_prevalence_scaled_strings[[j]], na.rm = TRUE)
+  
+  # Save min and max values
+  min_values_cardio[j] <- min_val_cardio
+  max_values_cardio[j] <- max_val_cardio
+  
+  # Normalize the column
+  cardio_prevalence_scaled_strings[[j]] <- (cardio_prevalence_scaled_strings[[j]] - min_val_cardio) / (max_val_cardio - min_val_cardio)
+}
+
+# Define the cross-validation method
+train_control_cardio <- trainControl(method = "cv", number = 10, savePredictions = "final")
+```
+
+Create new data set without location_id and location_name
+```{r}
+cardio_prevalence_scaled <- cardio_prevalence_scaled_strings %>% 
+  select(-c(location_id, location_name))
+```
+
+
+#### Scaled Cross-Validation Linear Regression Model
+``` {r}
+# Define the control for the RFE process
+rfe_control_cardio <- rfeControl(functions = lmFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_results_cardio <- rfe(cardio_prevalence_scaled[, -1], 
+                          cardio_prevalence_scaled$avg_prevalence_rate, 
+                          sizes = c(2:8), 
+                          rfeControl = rfe_control_cardio)
+
+# Print the results of RFE
+print(rfe_results_cardio)
+
+# Get the optimal set of features
+optimal_features_cardio <- predictors(rfe_results_cardio)
+print(optimal_features_cardio)
+
+# Train the model using the optimal features
+model_cv_lm_cardio <- train(avg_prevalence_rate ~ ., 
+                            data = cardio_prevalence_scaled[, c(optimal_features_cardio, "avg_prevalence_rate")], 
+                            method = "lm", trControl = train_control_cardio)
+
+# Print the model summary
+print(model_cv_lm_cardio)
+
+# Extract predictions from the model
+predictions_cardio <- model_cv_lm_cardio$pred
+
+# Calculate evaluation metrics
+mspe_cv_lm_cardio <- mean((predictions_cardio$pred - predictions_cardio$obs)^2)
+mae_cv_lm_cardio <- mean(abs(predictions_cardio$pred - predictions_cardio$obs))
+rmse_cv_lm_cardio <- sqrt(mspe_cv_lm_cardio)
+r_squared_cv_lm_cardio <- cor(predictions_cardio$pred, predictions_cardio$obs)^2
+
+# Print the evaluation metrics
+metrics_cv_lm_cardio <- data.frame(Metric = c("MSPE", "MAE", "RMSE", "R-squared"),
+                      Value = c(mspe_cv_lm_cardio, mae_cv_lm_cardio, 
+                                rmse_cv_lm_cardio, r_squared_cv_lm_cardio))
+metrics_cv_lm_cardio
+
+# Extract the final model
+final_model_cv_lm_cardio <- model_cv_lm_cardio$finalModel
+
+summary(final_model_cv_lm_cardio)
+```
+
+```{r}
+# Create a dataframe with column names and their min/max values
+df_min_max_cardio <- data.frame(
+  Column_Name = scaling_cols,
+  Min_Value_cardio = min_values_cardio,
+  Max_Value_cardio = max_values_cardio,
+  Max_Min_cardio = max_values_cardio-min_values_cardio
+)
+
+# Print the dataframe
+print(df_min_max_cardio)
+```
+
+
+```{r}
+# Extract the coefficients from the final model
+scaled_coefficients_cv_lm_cardio <- coef(final_model_cv_lm_cardio)
+
+# Function to convert scaled coefficients back to their original scale
+convert_to_original_scale <- function(beta_scaled, predictor, df_min_max) {
+  max_min_response <- df_min_max_cardio$Max_Min[df_min_max_cardio$Column_Name == "avg_prevalence_rate"]
+  max_min_predictor <- df_min_max_cardio$Max_Min[df_min_max_cardio$Column_Name == predictor]
+  
+  beta_original <- beta_scaled * max_min_response / max_min_predictor
+  return(beta_original)
+}
+
+# Initialize a list to store the original coefficients
+original_coefficients_cv_lm_cardio <- list()
+
+# Loop over each of the optimal features
+for (feature in optimal_features_cardio) {
+  if (feature %in% names(scaled_coefficients_cv_lm_cardio)) {
+    beta_scaled <- scaled_coefficients_cv_lm_cardio[[feature]]
+    beta_original <- convert_to_original_scale(beta_scaled, feature, df_min_max_cardio)
+    original_coefficients_cv_lm_cardio[[feature]] <- beta_original
+  }
+}
+
+# Convert the list to a dataframe for better readability
+original_coefficients_df_cv_lm_cardio <- data.frame(
+  Feature = names(original_coefficients_cv_lm_cardio),
+  Scaled_Coefficient = unlist(scaled_coefficients_cv_lm_cardio[optimal_features_cardio]),
+  Original_Coefficient = unlist(original_coefficients_cv_lm_cardio)
+)
+
+# Print the dataframe with the original coefficients
+print(original_coefficients_df_cv_lm_cardio)
+
+```
+
+#### Random Forest {.tabset}
+
+#### Scaled Cross-Validation Random Forest Model
+```{r}
+# Define the control for the RFE process
+rfe_control_cardio_rf <- rfeControl(functions = rfFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_results_cardio_rf <- rfe(cardio_prevalence_scaled[, -1], 
+                          cardio_prevalence_scaled$avg_prevalence_rate, 
+                          sizes = c(2:8), 
+                          rfeControl = rfe_control_cardio_rf)
+
+# Print the results of RFE
+print(rfe_results_cardio_rf)
+
+# Get the optimal set of features
+optimal_features_cardio_rf <- predictors(rfe_results_cardio_rf)
+print(optimal_features_cardio_rf)
+
+# Train the model using the optimal features
+model_rf_cardio <- train(avg_prevalence_rate ~ ., 
+                            data = cardio_prevalence_scaled[, c(optimal_features_cardio_rf, "avg_prevalence_rate")], 
+                            method = "rf", trControl = train_control_cardio)
+
+# Print the model summary
+print(model_rf_cardio)
+
+# Extract predictions from the model
+predictions_cardio_rf <- model_rf_cardio$pred
+
+# Calculate evaluation metrics
+mspe_rf_cardio <- mean((predictions_cardio_rf$pred - predictions_cardio_rf$obs)^2)
+mae_rf_cardio <- mean(abs(predictions_cardio_rf$pred - predictions_cardio_rf$obs))
+rmse_rf_cardio <- sqrt(mspe_rf_cardio)
+r_squared_rf_cardio <- cor(predictions_cardio_rf$pred, predictions_cardio_rf$obs)^2
+
+# Print the evaluation metrics
+metrics_rf_cardio <- data.frame(Metric = c("MSPE", "MAE", "RMSE", "R-squared"),
+                      Value = c(mspe_rf_cardio, mae_rf_cardio, 
+                                rmse_rf_cardio, r_squared_rf_cardio))
+metrics_rf_cardio
+
+# Extract the final model
+final_model_rf_cardio <- model_rf_cardio$finalModel
+
+summary(final_model_rf_cardio)
+```
+```{r}
+print(optimal_features_cardio_rf)
+```
+
+
+Feature Importance
+```{r}
+# make dataframe from importance() output
+feat_imp_df_cardio_prevalence <- importance(final_model_rf_cardio) %>% 
+  data.frame() %>% 
+  mutate(feature = row.names(.)) 
+
+  # plot dataframe
+ggplot(feat_imp_df_cardio_prevalence, aes(x = reorder(feature, IncNodePurity), 
+                         y = IncNodePurity)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    theme_classic() +
+    labs(
+      x     = "Feature",
+      y     = "Importance",
+      title = "Feature Importance: Cardio Random Forest Model"
+    )
+```
+
+
+
+
+
+<div class='tableauPlaceholder' id='viz1719876679718' style='position: relative'><noscript><a href='#'><img alt='Cluster Depiction on World Map ' src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;N8&#47;N8W3BRMBY&#47;1_rss.png' style='border: none' /></a></noscript><object class='tableauViz'  style='display:none;'><param name='host_url' value='https%3A%2F%2Fpublic.tableau.com%2F' /> <param name='embed_code_version' value='3' /> <param name='path' value='shared&#47;N8W3BRMBY' /> <param name='toolbar' value='yes' /><param name='static_image' value='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;N8&#47;N8W3BRMBY&#47;1.png' /> <param name='animate_transition' value='yes' /><param name='display_static_image' value='yes' /><param name='display_spinner' value='yes' /><param name='display_overlay' value='yes' /><param name='display_count' value='yes' /><param name='language' value='en-US' /><param name='filter' value='publish=yes' /></object></div> 
+```{js, embedtable_map, echo=FALSE}
+var divElement = document.getElementById('viz1719876679718');                    var vizElement = divElement.getElementsByTagName('object')[0];                    vizElement.style.width='100%';vizElement.style.height=(divElement.offsetWidth*0.75)+'px';                    var scriptElement = document.createElement('script');                    scriptElement.src = 'https://public.tableau.com/javascripts/api/viz_v1.js';                    vizElement.parentNode.insertBefore(scriptElement, vizElement);               
+```
+
+
+
+
+### 2. Neoplasms {.tabset}
+
+#### Neoplasms Data Set
+Create neoplasms prevalence data set
+```{r}
+# Neoplasms:	cause_id = 410	
+neoplasm_prevalence <- combined_prevalence_data %>% 
+  filter(cause_id == 410) %>% 
+  select(-c("cause_name", "cause_id", location_id, location_name))
+```
+
+#### Correlation Matrix
+
+```{r}
+corr_data_neoplasm <- neoplasm_prevalence %>% 
+  cor(use = "complete.obs") %>% 
+  round(2)
+
+corrplot(corr_data_neoplasm[4:10,1:3], 
+         tl.col = "black", tl.srt = 45, cl.pos='r', cl.ratio=.4, cl.align.text='l', cl.offset=.5, cl.length=15,
+         title = "Correlation Matrix for Neoplasms")
+```
+
+#### Data Preparation for Modeling
+
+Drop Death Rate from Data Frame
+```{r}
+neoplasm_prevalence <- neoplasm_prevalence %>% 
+  select(-c(avg_death_rate, avg_DALY_rate))
+```
+
+#### Normalize Data and Set Cross-Validation Parameters
+```{r}
+set.seed(1234)
+# Make a copy of the dataset to work with
+neoplasm_prevalence_scaled <- neoplasm_prevalence
+
+# Initialize empty vectors to store min and max values
+min_values_neoplasm <- numeric(length = ncol(neoplasm_prevalence_scaled))
+max_values_neoplasm <- numeric(length = ncol(neoplasm_prevalence_scaled))
+
+# Normalize all numerical variables to range [0, 1] and save min/max values
+cols <- colnames(neoplasm_prevalence_scaled)
+for (j in seq_along(cols)) {
+  min_val_neoplasm <- min(neoplasm_prevalence_scaled[[j]], na.rm = TRUE)
+  max_val_neoplasm <- max(neoplasm_prevalence_scaled[[j]], na.rm = TRUE)
+  
+  # Save min and max values
+  min_values_neoplasm[j] <- min_val_neoplasm
+  max_values_neoplasm[j] <- max_val_neoplasm
+  
+  # Normalize the column
+  neoplasm_prevalence_scaled[[j]] <- (neoplasm_prevalence_scaled[[j]] - min_val_neoplasm) / (max_val_neoplasm - min_val_neoplasm)
+}
+
+# Define the cross-validation method
+train_control_neoplasm <- trainControl(method = "cv", number = 10, savePredictions = "final")
+```
+
+#### Scaled Cross-Validation Linear Regression Model
+``` {r}
+# Define the control for the RFE process
+rfe_control_neoplasm <- rfeControl(functions = lmFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_results_neoplasm <- rfe(neoplasm_prevalence_scaled[, -1], 
+                          neoplasm_prevalence_scaled$avg_prevalence_rate, 
+                          sizes = c(2:8), 
+                          rfeControl = rfe_control_neoplasm)
+
+# Print the results of RFE
+print(rfe_results_neoplasm)
+
+# Get the optimal set of features
+optimal_features_neoplasm <- predictors(rfe_results_neoplasm)
+print(optimal_features_neoplasm)
+
+# Train the model using the optimal features
+model_cv_lm_neoplasm <- train(avg_prevalence_rate ~ ., 
+                            data = neoplasm_prevalence_scaled[, c(optimal_features_neoplasm, "avg_prevalence_rate")], 
+                            method = "lm", trControl = train_control_neoplasm)
+
+# Print the model summary
+print(model_cv_lm_neoplasm)
+
+# Extract predictions from the model
+predictions_neoplasm <- model_cv_lm_neoplasm$pred
+
+# Calculate evaluation metrics
+mspe_cv_lm_neoplasm <- mean((predictions_neoplasm$pred - predictions_neoplasm$obs)^2)
+mae_cv_lm_neoplasm <- mean(abs(predictions_neoplasm$pred - predictions_neoplasm$obs))
+rmse_cv_lm_neoplasm <- sqrt(mspe_cv_lm_neoplasm)
+r_squared_cv_lm_neoplasm <- cor(predictions_neoplasm$pred, predictions_neoplasm$obs)^2
+
+# Print the evaluation metrics
+metrics_cv_lm_neoplasm <- data.frame(Metric = c("MSPE", "MAE", "RMSE", "R-squared"),
+                      Value = c(mspe_cv_lm_neoplasm, mae_cv_lm_neoplasm, 
+                                rmse_cv_lm_neoplasm, r_squared_cv_lm_neoplasm))
+metrics_cv_lm_neoplasm
+
+# Extract the final model
+final_model_cv_lm_neoplasm <- model_cv_lm_neoplasm$finalModel
+
+summary(final_model_cv_lm_neoplasm)
+```
+
+```{r}
+# Create a dataframe with column names and their min/max values
+df_min_max_neoplasm <- data.frame(
+  Column_Name = cols,
+  Min_Value_neoplasm = min_values_neoplasm,
+  Max_Value_neoplasm = max_values_neoplasm,
+  Max_Min_neoplasm = max_values_neoplasm-min_values_neoplasm
+)
+
+# Print the dataframe
+print(df_min_max_neoplasm)
+```
+
+
+```{r}
+# Extract the coefficients from the final model
+scaled_coefficients_cv_lm_neoplasm <- coef(final_model_cv_lm_neoplasm)
+
+# Function to convert scaled coefficients back to their original scale
+convert_to_original_scale <- function(beta_scaled, predictor, df_min_max) {
+  max_min_response <- df_min_max_neoplasm$Max_Min[df_min_max_neoplasm$Column_Name == "avg_prevalence_rate"]
+  max_min_predictor <- df_min_max_neoplasm$Max_Min[df_min_max_neoplasm$Column_Name == predictor]
+  
+  beta_original <- beta_scaled * max_min_response / max_min_predictor
+  return(beta_original)
+}
+
+# Initialize a list to store the original coefficients
+original_coefficients_cv_lm_neoplasm <- list()
+
+# Loop over each of the optimal features
+for (feature in optimal_features_neoplasm) {
+  if (feature %in% names(scaled_coefficients_cv_lm_neoplasm)) {
+    beta_scaled <- scaled_coefficients_cv_lm_neoplasm[[feature]]
+    beta_original <- convert_to_original_scale(beta_scaled, feature, df_min_max_neoplasm)
+    original_coefficients_cv_lm_neoplasm[[feature]] <- beta_original
+  }
+}
+
+# Convert the list to a dataframe for better readability
+original_coefficients_df_cv_lm_neoplasm <- data.frame(
+  Feature = names(original_coefficients_cv_lm_neoplasm),
+  Scaled_Coefficient = unlist(scaled_coefficients_cv_lm_neoplasm[optimal_features_neoplasm]),
+  Original_Coefficient = unlist(original_coefficients_cv_lm_neoplasm)
+)
+
+# Print the dataframe with the original coefficients
+print(original_coefficients_df_cv_lm_neoplasm)
+
+```
+
+#### Random Forest {.tabset}
+
+#### Scaled Cross-Validation Random Forest Model
+```{r}
+# Define the control for the RFE process
+rfe_control_neoplasm_rf <- rfeControl(functions = rfFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_results_neoplasm_rf <- rfe(neoplasm_prevalence_scaled[, -1], 
+                          neoplasm_prevalence_scaled$avg_prevalence_rate, 
+                          sizes = c(2:8), 
+                          rfeControl = rfe_control_neoplasm_rf)
+
+# Print the results of RFE
+print(rfe_results_neoplasm_rf)
+
+# Get the optimal set of features
+optimal_features_neoplasm_rf <- predictors(rfe_results_neoplasm_rf)
+print(optimal_features_neoplasm_rf)
+
+# Train the model using the optimal features
+model_rf_neoplasm <- train(avg_prevalence_rate ~ ., 
+                            data = neoplasm_prevalence_scaled[, c(optimal_features_neoplasm_rf, "avg_prevalence_rate")], 
+                            method = "rf", trControl = train_control_neoplasm)
+
+# Print the model summary
+print(model_rf_neoplasm)
+
+# Extract predictions from the model
+predictions_neoplasm_rf <- model_rf_neoplasm$pred
+
+# Calculate evaluation metrics
+mspe_rf_neoplasm <- mean((predictions_neoplasm_rf$pred - predictions_neoplasm_rf$obs)^2)
+mae_rf_neoplasm <- mean(abs(predictions_neoplasm_rf$pred - predictions_neoplasm_rf$obs))
+rmse_rf_neoplasm <- sqrt(mspe_rf_neoplasm)
+r_squared_rf_neoplasm <- cor(predictions_neoplasm_rf$pred, predictions_neoplasm_rf$obs)^2
+
+# Print the evaluation metrics
+metrics_rf_neoplasm <- data.frame(Metric = c("MSPE", "MAE", "RMSE", "R-squared"),
+                      Value = c(mspe_rf_neoplasm, mae_rf_neoplasm, 
+                                rmse_rf_neoplasm, r_squared_rf_neoplasm))
+metrics_rf_neoplasm
+
+# Extract the final model
+final_model_rf_neoplasm <- model_rf_neoplasm$finalModel
+
+summary(final_model_rf_neoplasm)
+```
+```{r}
+print(optimal_features_neoplasm_rf)
+```
+
+
+Feature Importance
+```{r}
+# make dataframe from importance() output
+feat_imp_df_neoplasm_prevalence <- importance(final_model_rf_neoplasm) %>% 
+  data.frame() %>% 
+  mutate(feature = row.names(.)) 
+
+  # plot dataframe
+ggplot(feat_imp_df_neoplasm_prevalence, aes(x = reorder(feature, IncNodePurity), 
+                         y = IncNodePurity)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    theme_classic() +
+    labs(
+      x     = "Feature",
+      y     = "Importance",
+      title = "Feature Importance: neoplasm Random Forest Model"
+    )
+```
+
+### 3. Chronic Respiratory Diseases {.tabset}
+
+#### Chronic Respiratory Diseases Data Set
+
+Create Chronic Respiratory Diseases prevalence data set
+```{r}
+# Chronic respiratory diseases:	cause_id = 508	
+respiratory_prevalence <- combined_prevalence_data %>% 
+  filter(cause_id == 508) %>% 
+  select(-c("cause_name", "cause_id", location_id, location_name))
+```
+
+#### Correlation Matrix
+
+```{r}
+corr_data_respiratory <- respiratory_prevalence %>% 
+  cor(use = "complete.obs") %>% 
+  round(2)
+
+corrplot(corr_data_respiratory[4:10,1:3], 
+         tl.col = "black", tl.srt = 45, cl.pos='r', cl.ratio=.4, cl.align.text='l', cl.offset=.5, cl.length=15,
+         title = "Correlation Matrix for Chronic Respiratory Diseases")
+```
+
+#### Data Preparation for Modeling
+
+Drop Death Rate from Data Frame
+```{r}
+respiratory_prevalence <- respiratory_prevalence %>% 
+  select(-c(avg_death_rate, avg_DALY_rate))
+```
+
+#### Normalize Data and Set Cross-Validation Parameters
+```{r}
+set.seed(1234)
+# Make a copy of the dataset to work with
+respiratory_prevalence_scaled <- respiratory_prevalence
+
+# Initialize empty vectors to store min and max values
+min_values_respiratory <- numeric(length = ncol(respiratory_prevalence_scaled))
+max_values_respiratory <- numeric(length = ncol(respiratory_prevalence_scaled))
+
+# Normalize all numerical variables to range [0, 1] and save min/max values
+cols <- colnames(respiratory_prevalence_scaled)
+for (j in seq_along(cols)) {
+  min_val_respiratory <- min(respiratory_prevalence_scaled[[j]], na.rm = TRUE)
+  max_val_respiratory <- max(respiratory_prevalence_scaled[[j]], na.rm = TRUE)
+  
+  # Save min and max values
+  min_values_respiratory[j] <- min_val_respiratory
+  max_values_respiratory[j] <- max_val_respiratory
+  
+  # Normalize the column
+  respiratory_prevalence_scaled[[j]] <- (respiratory_prevalence_scaled[[j]] - min_val_respiratory) / (max_val_respiratory - min_val_respiratory)
+}
+
+# Define the cross-validation method
+train_control_respiratory <- trainControl(method = "cv", number = 10, savePredictions = "final")
+```
+
+#### Scaled Cross-Validation Linear Regression Model
+``` {r}
+# Define the control for the RFE process
+rfe_control_respiratory <- rfeControl(functions = lmFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_results_respiratory <- rfe(respiratory_prevalence_scaled[, -1], 
+                          respiratory_prevalence_scaled$avg_prevalence_rate, 
+                          sizes = c(2:8), 
+                          rfeControl = rfe_control_respiratory)
+
+# Print the results of RFE
+print(rfe_results_respiratory)
+
+# Get the optimal set of features
+optimal_features_respiratory <- predictors(rfe_results_respiratory)
+print(optimal_features_respiratory)
+
+# Train the model using the optimal features
+model_cv_lm_respiratory <- train(avg_prevalence_rate ~ ., 
+                            data = respiratory_prevalence_scaled[, c(optimal_features_respiratory, "avg_prevalence_rate")], 
+                            method = "lm", trControl = train_control_respiratory)
+
+# Print the model summary
+print(model_cv_lm_respiratory)
+
+# Extract predictions from the model
+predictions_respiratory <- model_cv_lm_respiratory$pred
+
+# Calculate evaluation metrics
+mspe_cv_lm_respiratory <- mean((predictions_respiratory$pred - predictions_respiratory$obs)^2)
+mae_cv_lm_respiratory <- mean(abs(predictions_respiratory$pred - predictions_respiratory$obs))
+rmse_cv_lm_respiratory <- sqrt(mspe_cv_lm_respiratory)
+r_squared_cv_lm_respiratory <- cor(predictions_respiratory$pred, predictions_respiratory$obs)^2
+
+# Print the evaluation metrics
+metrics_cv_lm_respiratory <- data.frame(Metric = c("MSPE", "MAE", "RMSE", "R-squared"),
+                      Value = c(mspe_cv_lm_respiratory, mae_cv_lm_respiratory, 
+                                rmse_cv_lm_respiratory, r_squared_cv_lm_respiratory))
+metrics_cv_lm_respiratory
+
+# Extract the final model
+final_model_cv_lm_respiratory <- model_cv_lm_respiratory$finalModel
+
+summary(final_model_cv_lm_respiratory)
+```
+
+```{r}
+# Create a dataframe with column names and their min/max values
+df_min_max_respiratory <- data.frame(
+  Column_Name = cols,
+  Min_Value_respiratory = min_values_respiratory,
+  Max_Value_respiratory = max_values_respiratory,
+  Max_Min_respiratory = max_values_respiratory-min_values_respiratory
+)
+
+# Print the dataframe
+print(df_min_max_respiratory)
+```
+
+
+```{r}
+# Extract the coefficients from the final model
+scaled_coefficients_cv_lm_respiratory <- coef(final_model_cv_lm_respiratory)
+
+# Function to convert scaled coefficients back to their original scale
+convert_to_original_scale <- function(beta_scaled, predictor, df_min_max) {
+  max_min_response <- df_min_max_respiratory$Max_Min[df_min_max_respiratory$Column_Name == "avg_prevalence_rate"]
+  max_min_predictor <- df_min_max_respiratory$Max_Min[df_min_max_respiratory$Column_Name == predictor]
+  
+  beta_original <- beta_scaled * max_min_response / max_min_predictor
+  return(beta_original)
+}
+
+# Initialize a list to store the original coefficients
+original_coefficients_cv_lm_respiratory <- list()
+
+# Loop over each of the optimal features
+for (feature in optimal_features_respiratory) {
+  if (feature %in% names(scaled_coefficients_cv_lm_respiratory)) {
+    beta_scaled <- scaled_coefficients_cv_lm_respiratory[[feature]]
+    beta_original <- convert_to_original_scale(beta_scaled, feature, df_min_max_respiratory)
+    original_coefficients_cv_lm_respiratory[[feature]] <- beta_original
+  }
+}
+
+# Convert the list to a dataframe for better readability
+original_coefficients_df_cv_lm_respiratory <- data.frame(
+  Feature = names(original_coefficients_cv_lm_respiratory),
+  Scaled_Coefficient = unlist(scaled_coefficients_cv_lm_respiratory[optimal_features_respiratory]),
+  Original_Coefficient = unlist(original_coefficients_cv_lm_respiratory)
+)
+
+# Print the dataframe with the original coefficients
+print(original_coefficients_df_cv_lm_respiratory)
+
+```
+
+#### Random Forest {.tabset}
+
+#### Scaled Cross-Validation Random Forest Model
+```{r}
+# Define the control for the RFE process
+rfe_control_respiratory_rf <- rfeControl(functions = rfFuncs, method = "cv", number = 10)
+
+# Perform RFE
+rfe_results_respiratory_rf <- rfe(respiratory_prevalence_scaled[, -1], 
+                          respiratory_prevalence_scaled$avg_prevalence_rate, 
+                          sizes = c(2:8), 
+                          rfeControl = rfe_control_respiratory_rf)
+
+# Print the results of RFE
+print(rfe_results_respiratory_rf)
+
+# Get the optimal set of features
+optimal_features_respiratory_rf <- predictors(rfe_results_respiratory_rf)
+print(optimal_features_respiratory_rf)
+
+# Train the model using the optimal features
+model_rf_respiratory <- train(avg_prevalence_rate ~ ., 
+                            data = respiratory_prevalence_scaled[, c(optimal_features_respiratory_rf, "avg_prevalence_rate")], 
+                            method = "rf", trControl = train_control_respiratory)
+
+# Print the model summary
+print(model_rf_respiratory)
+
+# Extract predictions from the model
+predictions_respiratory_rf <- model_rf_respiratory$pred
+
+# Calculate evaluation metrics
+mspe_rf_respiratory <- mean((predictions_respiratory_rf$pred - predictions_respiratory_rf$obs)^2)
+mae_rf_respiratory <- mean(abs(predictions_respiratory_rf$pred - predictions_respiratory_rf$obs))
+rmse_rf_respiratory <- sqrt(mspe_rf_respiratory)
+r_squared_rf_respiratory <- cor(predictions_respiratory_rf$pred, predictions_respiratory_rf$obs)^2
+
+# Print the evaluation metrics
+metrics_rf_respiratory <- data.frame(Metric = c("MSPE", "MAE", "RMSE", "R-squared"),
+                      Value = c(mspe_rf_respiratory, mae_rf_respiratory, 
+                                rmse_rf_respiratory, r_squared_rf_respiratory))
+metrics_rf_respiratory
+
+# Extract the final model
+final_model_rf_respiratory <- model_rf_respiratory$finalModel
+
+summary(final_model_rf_respiratory)
+```
+```{r}
+print(optimal_features_respiratory_rf)
+```
+
+
+Feature Importance
+```{r}
+# make dataframe from importance() output
+feat_imp_df_respiratory_prevalence <- importance(final_model_rf_respiratory) %>% 
+  data.frame() %>% 
+  mutate(feature = row.names(.)) 
+
+  # plot dataframe
+ggplot(feat_imp_df_respiratory_prevalence, aes(x = reorder(feature, IncNodePurity), 
+                         y = IncNodePurity)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    theme_classic() +
+    labs(
+      x     = "Feature",
+      y     = "Importance",
+      title = "Feature Importance: respiratory Random Forest Model"
+    )
+```
